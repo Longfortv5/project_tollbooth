@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "name": "project-tollbooth",
+  "name": "agent-gamma",
   "description": "Premium multi-ticker market microstructure regime and 0DTE options pinning selector. Exposes real-time quantitative greeks, walls, and pinning magnets with x402 pay-per-call and prepaid key billing.",
   "maintainers": ["Longfortv5"],
   "type": "mcp_server",
