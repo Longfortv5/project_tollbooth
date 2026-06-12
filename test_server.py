@@ -251,21 +251,42 @@ def run_test():
                 success = False
 
         # Test 6: Purchase credits without payment (should require payment -> 402)
-        print("\nTest 6: POST /credits/purchase without payment (Gated purchase)...")
-        res_buy = client.post("http://127.0.0.1:8085/credits/purchase")
-        print(f"Response status code: {res_buy.status_code}")
-        if res_buy.status_code != 402:
-            print(f"[-] Test 6 Failed: Expected 402, got {res_buy.status_code}. Body: {res_buy.text}")
-            success = False
-        else:
-            buy_header = res_buy.headers.get("Payment-Required")
-            if buy_header and b'"150000000"' in base64.b64decode(buy_header):
-                print("[+] Test 6 Passed: Purchase gated at credit-pack price (150 USDC atomic)")
-            elif buy_header:
-                print("[+] Test 6 Passed: Received 402 with Payment-Required header")
-            else:
-                print("[-] Test 6 Failed: Missing Payment-Required header")
+        print("\nTest 6: POST /credits/purchase without payment (Gated purchase - all tiers)...")
+        tiers_to_test = [
+            ("", "150000000", "standard"),
+            ("?tier=starter", "25000000", "starter"),
+            ("?tier=growth", "95000000", "growth"),
+            ("?tier=pro", "250000000", "pro")
+        ]
+        for tier_suffix, expected_price, tier_name in tiers_to_test:
+            res_buy = client.post(f"http://127.0.0.1:8085/credits/purchase{tier_suffix}")
+            print(f"Response status code for {tier_name}: {res_buy.status_code}")
+            if res_buy.status_code != 402:
+                print(f"[-] Test 6 Failed for {tier_name}: Expected 402, got {res_buy.status_code}. Body: {res_buy.text}")
                 success = False
+            else:
+                buy_header = res_buy.headers.get("Payment-Required")
+                if not buy_header:
+                    print(f"[-] Test 6 Failed for {tier_name}: Missing 'Payment-Required' header")
+                    success = False
+                else:
+                    try:
+                        decoded = base64.b64decode(buy_header).decode("utf-8")
+                        data = json.loads(decoded)
+                        accepts = data.get("accepts")
+                        if isinstance(accepts, list):
+                            option = accepts[0]
+                        else:
+                            option = accepts
+                        amount = option.get("amount")
+                        if amount != expected_price:
+                            print(f"[-] Test 6 Failed for {tier_name}: expected price '{expected_price}', got '{amount}'")
+                            success = False
+                        else:
+                            print(f"[+] Verified {tier_name} tier returns correct price: {amount}")
+                    except Exception as e:
+                        print(f"[-] Test 6 Failed for {tier_name} with exception: {e}")
+                        success = False
 
         # Test 7: tools/call with an unknown (but well-formed) API key -> falls through to 402
         print("\nTest 7: tools/call with unknown bearer key (should still be 402)...")
@@ -286,7 +307,7 @@ def run_test():
         print("\nTest 11: Verifying dynamic pricing challenges for each tool...")
         pricing_test_cases = [
             ("get_market_regime", "100000", {"ticker": "NQ"}),
-            ("get_0dte_verdict", "50000", {"ticker": "NQ"}),
+            ("get_0dte_verdict", "20000", {"ticker": "NQ"}),
             ("get_spx_gamma", "50000", {}),
             ("get_spy_gamma", "20000", {}),
             ("get_qqq_gex", "20000", {}),
