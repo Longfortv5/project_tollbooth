@@ -28,7 +28,7 @@ import os
 env = os.environ.copy()
 env["SMITHERY_API_KEY"] = "d79bd21b-8261-4029-b7b5-81068b749f0a"
 for name in names:
-    qualified_name = f"longfort/{name}"
+    qualified_name = f"agent-gamma/{name}"
     print(f"Publishing {qualified_name}...")
     cmd = ["npx", "smithery", "mcp", "publish", f"https://api.longfortpro.com/mcp/{name}", "-n", qualified_name]
     res = subprocess.run(cmd, env=env, capture_output=True, text=True)
