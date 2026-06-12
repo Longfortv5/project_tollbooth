@@ -11,6 +11,8 @@ from contextvars import ContextVar
 # Task-local context variable to track if the current request is an admin request
 bypass_gating_var: ContextVar[bool] = ContextVar("bypass_gating", default=False)
 dynamic_price_var: ContextVar[str] = ContextVar("dynamic_price", default="100000")
+purchase_price_var: ContextVar[str] = ContextVar("purchase_price", default="150000000")
+purchase_credits_var: ContextVar[int] = ContextVar("purchase_credits", default=10000)
 
 try:
     from dotenv import load_dotenv
@@ -654,11 +656,13 @@ async def precheck_regime_data(ticker: str) -> str | None:
 @app.post("/credits/purchase")
 async def purchase_credits():
     api_key = "tb_" + secrets.token_urlsafe(48)
-    await redis_client.set(f"credits:{api_key}", CREDIT_PACK_CALLS)
+    credits_count = purchase_credits_var.get()
+    price_paid = int(purchase_price_var.get())
+    await redis_client.set(f"credits:{api_key}", credits_count)
     return JSONResponse({
         "api_key": api_key,
-        "credits": CREDIT_PACK_CALLS,
-        "price_paid_atomic_usdc": CREDIT_PACK_PRICE_ATOMIC,
+        "credits": credits_count,
+        "price_paid_atomic_usdc": price_paid,
         "usage": "Pass this key as 'Authorization: Bearer <api_key>' on MCP tool calls.",
         "warning": "Store this key securely. It cannot be recovered if lost."
     })
@@ -784,6 +788,9 @@ async def get_well_known_server_card():
 def resolve_dynamic_price(context) -> AssetAmount:
     return AssetAmount(amount=dynamic_price_var.get(), asset=USDC_ASSET)
 
+def resolve_purchase_price(context) -> AssetAmount:
+    return AssetAmount(amount=purchase_price_var.get(), asset=USDC_ASSET)
+
 # 8. Configure Official x402 Gated Route Configuration
 routes_config = {
     # Per-call tool execution
@@ -800,7 +807,7 @@ routes_config = {
         accepts=PaymentOption(
             scheme="exact",
             pay_to=BASE_WALLET_ADDRESS,
-            price=AssetAmount(amount=CREDIT_PACK_PRICE_ATOMIC, asset=USDC_ASSET),
+            price=resolve_purchase_price,
             network=X402_NETWORK,
         )
     ),
@@ -984,6 +991,34 @@ class MCPPaymentGateMiddleware:
 
         # Credit pack purchase: always x402-gated, never bypassed by an API key
         if path_clean == "/credits/purchase" and method == "POST":
+            # Parse query parameters from ASGI scope
+            qs = scope.get("query_string", b"").decode("utf-8")
+            from urllib.parse import parse_qs
+            params = parse_qs(qs)
+            tier = params.get("tier", [""])[0].lower()
+            
+            # Pricing tiers (in USDC atomic units)
+            # Tier 1: Starter Pack - $25.00 / 1,500 calls (1.67c / call)
+            # Tier 2: Growth Pack - $95.00 / 7,000 calls (1.35c / call)
+            # Tier 3: Pro Pack - $250.00 / 25,000 calls (1.00c / call)
+            # Default: Standard Pack - $150.00 / 10,000 calls (1.50c / call)
+            
+            price = 150000000
+            credits_count = 10000
+            
+            if tier in ["starter", "explorer"]:
+                price = 25000000
+                credits_count = 1500
+            elif tier in ["growth", "active"]:
+                price = 95000000
+                credits_count = 7000
+            elif tier in ["pro", "desk"]:
+                price = 250000000
+                credits_count = 25000
+                
+            purchase_price_var.set(str(price))
+            purchase_credits_var.set(credits_count)
+            
             await self.run_official(scope, receive, send)
             return
 
