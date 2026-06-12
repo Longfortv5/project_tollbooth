@@ -5,5 +5,8 @@
   "maintainers": ["Longfortv5"],
   "type": "mcp_server",
   "status": "production",
-  "framework": "FastMCP"
+  "framework": "FastMCP",
+  "tags": ["options", "greeks", "0DTE", "microstructure", "finance"],
+  "license": "MIT",
+  "homepage": "https://github.com/Longfortv5/project_tollbooth"
 }
