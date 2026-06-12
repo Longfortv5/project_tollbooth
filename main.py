@@ -796,6 +796,83 @@ routes_config = {
     ),
 }
 
+mcp_server_var: ContextVar[str | None] = ContextVar("mcp_server", default=None)
+
+def filter_tools_list_response(resp_json, server_name: str):
+    if isinstance(resp_json, list):
+        return [filter_single_tools_response(item, server_name) for item in resp_json]
+    elif isinstance(resp_json, dict):
+        return filter_single_tools_response(resp_json, server_name)
+    return resp_json
+
+def filter_single_tools_response(item: dict, server_name: str) -> dict:
+    if not isinstance(item, dict) or "result" not in item:
+        return item
+    result = item["result"]
+    if not isinstance(result, dict) or "tools" not in result:
+        return item
+    
+    tools = result["tools"]
+    if not isinstance(tools, list):
+        return item
+    
+    filtered_tools = []
+    # Determine the ticker from the server name
+    # e.g. "spx-regime-selector" -> SPX
+    # e.g. "spacex-options" -> SPACEX
+    ticker = server_name.split("-")[0].upper()
+    
+    # Customize the description base
+    if "options" in server_name:
+        desc_prefix = f"[Brand: Longfort] [DEDICATED SERVER FOR {ticker} Options] "
+    elif "flow" in server_name:
+        desc_prefix = f"[Brand: Longfort] [DEDICATED SERVER FOR {ticker} Option Flow] "
+    elif "sentiment" in server_name:
+        desc_prefix = f"[Brand: Longfort] [DEDICATED SERVER FOR {ticker} Option Sentiment] "
+    else:
+        desc_prefix = f"[Brand: Longfort] [DEDICATED SERVER FOR {ticker}] "
+        
+    for tool in tools:
+        tool_name = tool.get("name")
+        if not tool_name:
+            continue
+            
+        # Hard filter for specific tools
+        if tool_name == "get_spx_gamma" and ticker != "SPX":
+            continue
+        if tool_name == "get_spy_gamma" and ticker != "SPY":
+            continue
+        if tool_name == "get_qqq_gex" and ticker != "QQQ":
+            continue
+            
+        # Customize or restrict the generic tools
+        if tool_name in {"get_market_regime", "get_0dte_verdict"}:
+            tool_copy = copy.deepcopy(tool)
+            desc = tool_copy.get("description", "")
+            tool_copy["description"] = desc_prefix + desc
+            # Enforce ticker restriction in the schema properties
+            try:
+                input_schema = tool_copy.get("inputSchema")
+                if input_schema and isinstance(input_schema, dict):
+                    properties = input_schema.get("properties")
+                    if properties and isinstance(properties, dict):
+                        ticker_prop = properties.get("ticker")
+                        if ticker_prop and isinstance(ticker_prop, dict):
+                            ticker_prop["default"] = ticker
+                            ticker_prop["enum"] = [ticker]
+            except Exception:
+                pass
+            filtered_tools.append(tool_copy)
+        else:
+            # For ticker-specific tools (like get_spx_gamma for SPX, etc.)
+            tool_copy = copy.deepcopy(tool)
+            desc = tool_copy.get("description", "")
+            tool_copy["description"] = desc_prefix + desc
+            filtered_tools.append(tool_copy)
+            
+    result["tools"] = filtered_tools
+    return item
+
 # 8. Pure ASGI Middleware for Granular MCP Tool Gating (Fail-Closed)
 # Avoids BaseHTTPMiddleware issues on streaming connections and resolves session handling bugs.
 class MCPPaymentGateMiddleware:
@@ -871,13 +948,27 @@ class MCPPaymentGateMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Always default bypass_gating_var to False for each request
+        # Always default ContextVars for each request
         bypass_gating_var.set(False)
         dynamic_price_var.set("100000")
+        mcp_server_var.set(None)
 
         path = scope.get("path", "")
         method = scope.get("method", "")
         path_clean = path.rstrip('/')
+
+        # Intercept and rewrite /mcp/{server_name}
+        mcp_match = re.match(r"^/mcp/([^/]+)$", path_clean)
+        if mcp_match:
+            server_name = mcp_match.group(1)
+            print(f"[DEBUG] MCP routing matched server: {server_name}", flush=True)
+            mcp_server_var.set(server_name)
+            # Rewrite path in ASGI scope so FastAPI routes it to mcp_sub_app
+            scope["path"] = "/mcp/"
+            if "raw_path" in scope:
+                scope["raw_path"] = b"/mcp/"
+            path = "/mcp/"
+            path_clean = "/mcp"
 
         # Credit pack purchase: always x402-gated, never bypassed by an API key
         if path_clean == "/credits/purchase" and method == "POST":
@@ -905,8 +996,17 @@ class MCPPaymentGateMiddleware:
                 return await receive()
 
             should_gate = False
+            is_tools_list = False
             try:
                 payload = json.loads(body_bytes)
+                if isinstance(payload, dict) and payload.get("method") == "tools/list":
+                    is_tools_list = True
+                elif isinstance(payload, list):
+                    for item in payload:
+                        if isinstance(item, dict) and item.get("method") == "tools/list":
+                            is_tools_list = True
+                            break
+                
                 if isinstance(payload, list):
                     # Batch request validation
                     paid_calls = 0
@@ -980,6 +1080,31 @@ class MCPPaymentGateMiddleware:
                             elif tool_name == "get_qqq_gex":
                                 ticker = "QQQ"
                             
+                            # Enforce dedicated server ticker restriction for batch
+                            if mcp_server_var.get():
+                                server_ticker = mcp_server_var.get().split("-")[0].upper()
+                                if ticker and ticker.strip().upper() != server_ticker:
+                                    # Return immediate error free of charge
+                                    error_response = {
+                                        "jsonrpc": "2.0",
+                                        "id": paid_item.get("id") if paid_item else None,
+                                        "error": {
+                                            "code": -32603,
+                                            "message": f"This server is dedicated to {server_ticker}. Queries for ticker '{ticker}' are not allowed."
+                                        }
+                                    }
+                                    await send({
+                                        "type": "http.response.start",
+                                        "status": 200,
+                                        "headers": [(b"content-type", b"application/json")]
+                                    })
+                                    await send({
+                                        "type": "http.response.body",
+                                        "body": json.dumps(error_response).encode("utf-8"),
+                                        "more_body": False
+                                    })
+                                    return
+
                             if isinstance(ticker, str):
                                 error_msg = await precheck_regime_data(ticker)
                                 if error_msg:
@@ -1033,6 +1158,35 @@ class MCPPaymentGateMiddleware:
                                 elif tool_name == "get_qqq_gex":
                                     ticker = "QQQ"
                                 
+                                # Dedicated server ticker enforcement
+                                if mcp_server_var.get():
+                                    server_ticker = mcp_server_var.get().split("-")[0].upper()
+                                    if ticker and ticker.strip().upper() != server_ticker:
+                                        error_msg = f"This server is dedicated to {server_ticker}. Queries for ticker '{ticker}' are not allowed."
+                                        result_body = {
+                                            "jsonrpc": "2.0",
+                                            "id": payload.get("id"),
+                                            "result": {
+                                                "content": [
+                                                    {
+                                                        "type": "text",
+                                                        "text": json.dumps({"error": error_msg})
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                        await send({
+                                            "type": "http.response.start",
+                                            "status": 200,
+                                            "headers": [(b"content-type", b"application/json")]
+                                        })
+                                        await send({
+                                            "type": "http.response.body",
+                                            "body": json.dumps(result_body).encode("utf-8"),
+                                            "more_body": False
+                                        })
+                                        return
+
                                 if isinstance(ticker, str):
                                     error_msg = await precheck_regime_data(ticker)
                                     if error_msg:
@@ -1109,8 +1263,80 @@ class MCPPaymentGateMiddleware:
             else:
                 # Bypass payment flow for free methods
                 bypass_gating_var.set(False)
-                await self.app(scope, custom_receive, send)
-                return
+                print(f"[DEBUG] Bypass free methods block. is_tools_list: {is_tools_list}, mcp_server: {mcp_server_var.get()}", flush=True)
+                if is_tools_list and mcp_server_var.get():
+                    server_name = mcp_server_var.get()
+                    response_headers = []
+                    response_status = 200
+                    response_body_chunks = []
+
+                    async def filter_tools_send(msg):
+                        nonlocal response_headers, response_status
+                        msg_type = msg.get("type")
+                        if msg_type == "http.response.start":
+                            response_status = msg.get("status", 200)
+                            response_headers = list(msg.get("headers", []))
+                            return
+                        elif msg_type == "http.response.body":
+                            response_body_chunks.append(msg.get("body", b""))
+                            if msg.get("more_body", False):
+                                return
+                            
+                            full_body = b"".join(response_body_chunks)
+                            full_body_str = full_body.decode("utf-8")
+                            print(f"[DEBUG] Intercepted raw body: {full_body_str[:200]}...", flush=True)
+                            
+                            # Handle Server-Sent Events (SSE) format
+                            if "data:" in full_body_str:
+                                new_lines = []
+                                for line in full_body_str.splitlines():
+                                    if line.startswith("data:"):
+                                        data_json_str = line[5:].strip()
+                                        try:
+                                            resp_json = json.loads(data_json_str)
+                                            filtered_resp = filter_tools_list_response(resp_json, server_name)
+                                            new_lines.append(f"data: {json.dumps(filtered_resp)}")
+                                        except Exception as e:
+                                            print(f"[DEBUG] SSE line parse failed: {e}", flush=True)
+                                            new_lines.append(line)
+                                    else:
+                                        new_lines.append(line)
+                                # Preserve line endings compatible with SSE specs
+                                filtered_body = "\r\n".join(new_lines).encode("utf-8") + b"\r\n\r\n"
+                                print(f"[DEBUG] Filtered SSE body length: {len(filtered_body)}", flush=True)
+                            else:
+                                try:
+                                    resp_json = json.loads(full_body_str)
+                                    filtered_resp = filter_tools_list_response(resp_json, server_name)
+                                    filtered_body = json.dumps(filtered_resp).encode("utf-8")
+                                    print(f"[DEBUG] Filtered JSON body length: {len(filtered_body)}", flush=True)
+                                except Exception as e:
+                                    print(f"[DEBUG] JSON filter failed: {e}", flush=True)
+                                    filtered_body = full_body
+
+                            new_headers = []
+                            for k, v in response_headers:
+                                if k.lower() == b"content-length":
+                                    new_headers.append((k, str(len(filtered_body)).encode("ascii")))
+                                else:
+                                    new_headers.append((k, v))
+                            
+                            await send({
+                                "type": "http.response.start",
+                                "status": response_status,
+                                "headers": new_headers
+                            })
+                            await send({
+                                "type": "http.response.body",
+                                "body": filtered_body,
+                                "more_body": False
+                            })
+                    
+                    await self.app(scope, custom_receive, filter_tools_send)
+                    return
+                else:
+                    await self.app(scope, custom_receive, send)
+                    return
 
         # Bypass for non-POST or other paths
         await self.app(scope, receive, send)
