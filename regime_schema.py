@@ -19,7 +19,7 @@ SCHEMA_VERSION = "1.0"
 MAX_KEY_STRIKES = 5
 
 # Canonical launch symbols (Phase 1: index complex, Phase 2: commodities)
-CANONICAL_TICKERS = {"QQQ", "SPY", "SPX", "IWM", "GLD", "USO", "SPCX"}
+CANONICAL_TICKERS = {"QQQ", "SPY", "SPX", "IWM", "GLD", "USO", "SPCX", "NVDA"}
 
 # Futures / colloquial aliases -> canonical symbol.
 TICKER_ALIASES = {

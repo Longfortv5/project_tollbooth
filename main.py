@@ -1067,9 +1067,9 @@ class MCPPaymentGateMiddleware:
                             
                             # Set dynamic price based on tool_name
                             price_to_set = "100000"
-                            if tool_name in {"get_0dte_verdict", "get_spx_gamma"}:
+                            if tool_name in {"get_spx_gamma"}:
                                 price_to_set = "50000"
-                            elif tool_name in {"get_spy_gamma", "get_qqq_gex"}:
+                            elif tool_name in {"get_spy_gamma", "get_qqq_gex", "get_0dte_verdict"}:
                                 price_to_set = "20000"
                             dynamic_price_var.set(price_to_set)
 
@@ -1146,9 +1146,9 @@ class MCPPaymentGateMiddleware:
                             
                             # Set dynamic price based on tool_name
                             price_to_set = "100000"
-                            if tool_name in {"get_0dte_verdict", "get_spx_gamma"}:
+                            if tool_name in {"get_spx_gamma"}:
                                 price_to_set = "50000"
-                            elif tool_name in {"get_spy_gamma", "get_qqq_gex"}:
+                            elif tool_name in {"get_spy_gamma", "get_qqq_gex", "get_0dte_verdict"}:
                                 price_to_set = "20000"
                             dynamic_price_var.set(price_to_set)
 
