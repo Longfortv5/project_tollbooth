@@ -27,7 +27,7 @@ All tool calls to `POST /mcp` require payment. The server automatically negotiat
 
 ### 2. `get_0dte_verdict`
 - **Description**: Returns 0-DTE qualitative volume concentration and strike breakdown verdict.
-- **Price**: 0.05 USDC (50,000 atomic units)
+- **Price**: 0.02 USDC (20,000 atomic units)
 - **Parameters**: `ticker` (string)
 
 ### 3. `get_spx_gamma`
@@ -44,14 +44,20 @@ All tool calls to `POST /mcp` require payment. The server automatically negotiat
 
 ## Billing Schemes
 
-### Scheme 1: Pay-per-Call (x402)
-- Zero credentials required.
-- Standard client sends raw requests, receives `402 Payment Required` with `Payment-Required` base64 challenge header.
+### Scheme 1: Pay-per-Call (Pay-as-you-Go via x402)
+- Zero credentials or account signups required.
+- Client sends raw request, receives `402 Payment Required` with `Payment-Required` base64 challenge header.
 - Client signs an EIP-3009 transfer authorization and retries the request with `Payment-Signature`.
 - Facilitator verifies the signature on-chain gaslessly.
 
-### Scheme 2: Prepaid Credit Pack
-- For high-frequency bots to bypass per-call verification latency.
-- Purchase a credit pack (10,000 calls) for 150 USDC by sending a paid POST request to `/credits/purchase`.
-- Receive an API key (`tb_...`). Pass this key as `Authorization: Bearer <api_key>` on all subsequent `/mcp` tool calls.
+### Scheme 2: Prepaid Credit Packs (Bulk Purchase)
+- Designed for active traders and high-frequency scan loops to bypass per-call verification latency.
+- Purchase a credit pack by sending a paid POST request to `/credits/purchase?tier=<tier>`.
+- Available Tiers:
+  - **Starter Pack (`?tier=starter`)**: **$25.00 USDC** for **1,500 calls** ($0.0167/call)
+  - **Growth Pack (`?tier=growth`)**: **$95.00 USDC** for **7,000 calls** ($0.0135/call)
+  - **Pro Pack (`?tier=pro`)**: **$250.00 USDC** for **25,000 calls** ($0.0100/call)
+  - **Standard Pack (Default)**: **$150.00 USDC** for **10,000 calls** ($0.0150/call)
+- Hitting the endpoint returns an API key (`tb_...`). Pass this key as `Authorization: Bearer <api_key>` on all subsequent `/mcp` tool calls.
+- Balance is decremented per call and returned in the `x-tollbooth-credits-remaining` response header.
 - Check balance via `GET /credits/balance`.

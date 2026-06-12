@@ -67,12 +67,18 @@ curl -i -X POST http://127.0.0.1:8000/mcp/ \
 
 ### B. Prepaid credits (API key)
 
-Buy a pack (this endpoint is itself x402-gated at the pack price):
+Buy a pack (this endpoint is itself x402-gated at the corresponding tier price):
+
+* **Starter Pack**: `$25.00 USDC` for 1,500 credits. Query parameter: `?tier=starter`
+* **Growth Pack**: `$95.00 USDC` for 7,000 credits. Query parameter: `?tier=growth`
+* **Pro Pack**: `$250.00 USDC` for 25,000 credits. Query parameter: `?tier=pro`
+* **Standard Pack**: `$150.00 USDC` for 10,000 credits. Query parameter: `?tier=standard` (or omit)
 
 ```bash
-curl -i -X POST http://127.0.0.1:8000/credits/purchase
-# -> 402 challenge at pack price; pay via x402 client to receive:
-# {"api_key": "tb_...", "credits": 10000, ...}
+# Example: Purchase the Starter Pack
+curl -i -X POST http://127.0.0.1:8000/credits/purchase?tier=starter
+# -> 402 challenge at starter price ($25 USDC); pay via x402 client to receive:
+# {"api_key": "tb_...", "credits": 1500, "price_paid_atomic_usdc": 25000000}
 ```
 
 Then call the tool with the key — no payment round-trip, balance returned per response:
