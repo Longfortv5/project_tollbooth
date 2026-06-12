@@ -22,7 +22,7 @@ Usage:
   .venv/bin/python test_paid_call.py                          # sepolia, tool call
   .venv/bin/python test_paid_call.py --ticker SPX
   .venv/bin/python test_paid_call.py --buy-credits            # purchase a pack
-  .venv/bin/python test_paid_call.py --network mainnet --url https://api.longfort.com/mcp/ --yes
+  .venv/bin/python test_paid_call.py --network mainnet --url https://api.longfortpro.com/mcp/ --yes
 
 NEVER pass the private key as an argument; only via BUYER_PRIVATE_KEY.
 """

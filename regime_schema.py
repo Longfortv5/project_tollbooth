@@ -19,7 +19,7 @@ SCHEMA_VERSION = "1.0"
 MAX_KEY_STRIKES = 5
 
 # Canonical launch symbols (Phase 1: index complex, Phase 2: commodities)
-CANONICAL_TICKERS = {"QQQ", "SPY", "SPX", "IWM", "GLD", "USO"}
+CANONICAL_TICKERS = {"QQQ", "SPY", "SPX", "IWM", "GLD", "USO", "SPCX"}
 
 # Futures / colloquial aliases -> canonical symbol.
 TICKER_ALIASES = {
@@ -218,6 +218,46 @@ def map_flashalpha_to_regime(snapshot: dict, ticker: str, timestamp: float | Non
             "missing": missing,
         },
     }
+
+
+def from_exposure_api(obj: dict) -> dict:
+    """Adapter: converts the nested exposure-API shape
+    ({"exposure_summary": {...}, "exposure_levels": {...}}) into the flat
+    snapshot dict that map_flashalpha_to_regime() consumes.
+    Use: map_flashalpha_to_regime(from_exposure_api(raw), ticker, ts)
+    where ts should come from exposure_summary.as_of (exchange truth)."""
+    summ = obj.get("exposure_summary") or {}
+    lev = (obj.get("exposure_levels") or {}).get("levels") or {}
+    exp = summ.get("exposures") or {}
+    return {
+        "spot": summ.get("underlying_price"),
+        "gamma_flip": summ.get("gamma_flip"),
+        "gamma_flip_eod": lev.get("gamma_flip"),
+        "regime": summ.get("regime"),
+        "net_gex": exp.get("net_gex"),
+        "net_dex": exp.get("net_dex"),
+        "net_vex": exp.get("net_vex"),
+        "net_chex": exp.get("net_chex"),
+        "call_wall": lev.get("call_wall") or lev.get("max_positive_gamma"),
+        "put_wall": lev.get("put_wall") or lev.get("max_negative_gamma"),
+        "zero_dte_magnet": lev.get("zero_dte_magnet"),
+    }
+
+
+def parse_as_of(obj: dict) -> float | None:
+    """Epoch seconds from exposure_summary.as_of (handles 7-digit fractions)."""
+    from datetime import datetime
+    raw = (obj.get("exposure_summary") or {}).get("as_of")
+    if not raw:
+        return None
+    s = str(raw).rstrip("Z")
+    if "." in s:                       # trim to microseconds for fromisoformat
+        head, frac = s.split(".", 1)
+        s = f"{head}.{frac[:6]}"
+    try:
+        return datetime.fromisoformat(s + "+00:00").timestamp()
+    except ValueError:
+        return None
 
 
 # Example canonical payload (what a paying agent receives), built from the

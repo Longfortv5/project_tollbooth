@@ -22,7 +22,7 @@ import sqlite3
 import asyncio
 import time
 
-from regime_schema import resolve_ticker, EXAMPLE_PAYLOAD, map_flashalpha_to_regime
+from regime_schema import resolve_ticker, EXAMPLE_PAYLOAD, map_flashalpha_to_regime, CANONICAL_TICKERS
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 import redis.asyncio as aioredis
@@ -321,6 +321,21 @@ async def _fetch_and_validate_regime_data(canonical_ticker: str, requested_ticke
         }
         symbol = symbol_map.get(canonical_ticker)
         if not symbol:
+            if canonical_ticker in CANONICAL_TICKERS:
+                flat_data = await fetch_sqlite_options_data(canonical_ticker)
+                if not flat_data or flat_data.get("net_gex") is None:
+                    return None, f"No option telemetry available in database for symbol '{canonical_ticker}'."
+                ts_val = flat_data.get("timestamp_epoch")
+                if ts_val:
+                    age = time.time() - float(ts_val)
+                    if age > MAX_REGIME_AGE_SECONDS:
+                        return None, f"Regime data for ticker '{requested_ticker}' is stale (age: {int(age)}s, max: {MAX_REGIME_AGE_SECONDS}s)."
+                try:
+                    regime_dict = map_flashalpha_to_regime(flat_data, canonical_ticker, timestamp=ts_val)
+                    regime_dict["requested_as"] = requested_ticker
+                    return regime_dict, None
+                except Exception as e:
+                    return None, f"Failed to map options telemetry for symbol '{canonical_ticker}': {str(e)}"
             return None, f"No live market data available for ticker '{requested_ticker}' in admin mode."
 
         import httpx
@@ -394,7 +409,7 @@ async def _fetch_and_validate_regime_data(canonical_ticker: str, requested_ticke
             return None, f"No live market data available for ticker '{requested_ticker}'."
             
         flat_data = await fetch_sqlite_options_data(canonical_ticker)
-        if not flat_data:
+        if not flat_data or flat_data.get("net_gex") is None:
             return None, f"No option telemetry available in database for symbol '{canonical_ticker}'."
             
         ts_val = flat_data.get("timestamp_epoch")
@@ -658,6 +673,103 @@ async def get_llms_txt():
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
     return "Tollbooth MCP Server"
+
+WELL_KNOWN_CARD = {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
+    "version": "1.0",
+    "protocolVersion": "2024-11-05",
+    "serverInfo": {
+        "name": "project-tollbooth",
+        "title": "Project Tollbooth MCP Server",
+        "version": "1.0.0"
+    },
+    "transport": {
+        "type": "streamable-http",
+        "endpoint": "/mcp"
+    },
+    "capabilities": {
+        "tools": {}
+    },
+    "tools": [
+        {
+            "name": "get_market_regime",
+            "title": "Get Market Regime",
+            "description": (
+                "Returns the full quantitative market regime payload (schema v1.0) for a ticker: "
+                "dealer exposure aggregates in USD (net GEX, DEX, VEX, charm), gamma regime and flip level, "
+                "volatility surface stats (ATM IV, HV20/60, VRP, 25-delta skew, smile ratio), structural levels "
+                "(call/put walls, max pain), top strike concentrations with open interest, and a consolidated consensus state. "
+                "Covers QQQ, SPY, SPX, IWM (futures aliases NQ/ES/RTY resolve automatically; GLD/USO for gold/WTI). "
+                "Designed for algorithmic execution gates and automated risk management guardrails. "
+                "Data is staleness-checked; calls for missing or stale data are answered free of charge."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Ticker symbol to query (QQQ, SPY, SPX, IWM, NQ, ES, RTY, GLD, USO)"
+                    }
+                },
+                "required": ["ticker"]
+            }
+        },
+        {
+            "name": "get_0dte_verdict",
+            "title": "Get 0DTE Pinning Verdict",
+            "description": (
+                "Returns the specialized 0DTE (Zero Days to Expiration) option pinning verdict "
+                "and GEX share percentage for a ticker. Useful for expiration day pinning plays. "
+                "Supports SPY, SPX, IWM (aliases ES, NQ, RTY resolve automatically)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Ticker symbol to query (QQQ, SPY, SPX, IWM, NQ, ES, RTY)"
+                    }
+                },
+                "required": ["ticker"]
+            }
+        },
+        {
+            "name": "get_spx_gamma",
+            "title": "Get SPX Gamma Profile",
+            "description": "Returns the SPX (S&P 500 Index) options gamma exposure profile and volatility regimes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "get_spy_gamma",
+            "title": "Get SPY Gamma Profile",
+            "description": "Returns the SPY (S&P 500 ETF) options gamma exposure profile.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "get_qqq_gex",
+            "title": "Get QQQ GEX Profile",
+            "description": "Returns the QQQ (Nasdaq 100 ETF) options gamma exposure profile (GEX) and volatility regimes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    ]
+}
+
+@app.get("/.well-known/mcp.json")
+async def get_well_known_mcp():
+    return JSONResponse(WELL_KNOWN_CARD)
+
+@app.get("/.well-known/mcp/server-card.json")
+async def get_well_known_server_card():
+    return JSONResponse(WELL_KNOWN_CARD)
 
 def resolve_dynamic_price(context) -> AssetAmount:
     return AssetAmount(amount=dynamic_price_var.get(), asset=USDC_ASSET)

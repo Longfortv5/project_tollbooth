@@ -4,7 +4,7 @@ Monetized Model Context Protocol (MCP) Server for real-time Options Telemetry, V
 
 ## Metadata
 - **Type**: Model Context Protocol (MCP) over Streamable HTTP
-- **URL**: `https://api.longfort.com/mcp`
+- **URL**: `https://api.longfortpro.com/mcp`
 - **Supported Tokens**: USDC (Base Mainnet, `eip155:8453`, token `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
 - **Recipient Wallet**: `0x6F275aB348EF19456C3f53bfb2A3122CaCaa1A7d`
 - **Specification**: x402 Payment Protocol V2
