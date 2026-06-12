@@ -821,6 +821,8 @@ def filter_single_tools_response(item: dict, server_name: str) -> dict:
     # e.g. "spx-regime-selector" -> SPX
     # e.g. "spacex-options" -> SPACEX
     ticker = server_name.split("-")[0].upper()
+    if ticker == "SPACEX":
+        ticker = "SPCX"
     
     # Customize the description base
     if "options" in server_name:
@@ -1083,6 +1085,8 @@ class MCPPaymentGateMiddleware:
                             # Enforce dedicated server ticker restriction for batch
                             if mcp_server_var.get():
                                 server_ticker = mcp_server_var.get().split("-")[0].upper()
+                                if server_ticker == "SPACEX":
+                                    server_ticker = "SPCX"
                                 if ticker and ticker.strip().upper() != server_ticker:
                                     # Return immediate error free of charge
                                     error_response = {
@@ -1161,6 +1165,8 @@ class MCPPaymentGateMiddleware:
                                 # Dedicated server ticker enforcement
                                 if mcp_server_var.get():
                                     server_ticker = mcp_server_var.get().split("-")[0].upper()
+                                    if server_ticker == "SPACEX":
+                                        server_ticker = "SPCX"
                                     if ticker and ticker.strip().upper() != server_ticker:
                                         error_msg = f"This server is dedicated to {server_ticker}. Queries for ticker '{ticker}' are not allowed."
                                         result_body = {
