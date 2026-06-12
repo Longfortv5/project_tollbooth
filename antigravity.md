@@ -109,3 +109,176 @@ To maximize edge, the following filter rules are implemented in the signal proce
 * **Negative Gamma Multiplier**: The Go trading engine applies a **1.35x multiplier** during negative gamma regimes to automatically tighten take-profits and widen stops, accommodating the higher intraday ATR.
 * **Lunch Doldrums Filter**: Standard execution blocks any 10s or 1min timeframe signals between **11:20 AM and 1:30 PM UK time** due to low-liquidity chop.
 * **Licensing & Redirection Safeguard**: Direct redistribution of raw derived metrics (like option walls) to paywalled endpoints is strictly blocked. When external agents call `get_market_regime`, all numeric strikes, walls, and calibration values are sanitized out and replaced with qualitative boundaries.
+
+---
+
+## 6. Project Tollbooth Specification & JSON Schema Baseline
+
+Project Tollbooth acts as a FastAPI-based **Model Context Protocol (MCP)** server over **Streamable HTTP (Server-Sent Events)**, exposing option/regime analytics with dual-path monetization:
+1. **Pay-per-call (x402 V2 Challenge)**: USDC micro-payments on Base network (Base Sepolia for testing).
+2. **Prepaid credit packs (API keys)**: Keys verified via Redis, allowing sub-second repeat access.
+
+### Endpoints and JSON Formats
+
+#### A. Free Discovery: List Tools
+* **Method**: `POST /mcp/` (Bypasses payment check for discovery methods)
+* **Request Payload**:
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "params": {},
+  "id": 1
+}
+```
+* **Response Payload (Admin / Unsanitized)**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      {
+        "name": "get_market_regime",
+        "description": "Returns full quantitative market regime payload...",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ticker": {"type": "string", "description": "Asset ticker (e.g. SPX, NQ)"}
+          },
+          "required": ["ticker"]
+        }
+      },
+      {
+        "name": "get_0dte_verdict",
+        "description": "Returns zero-dte option pinning verdict...",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ticker": {"type": "string"}
+          },
+          "required": ["ticker"]
+        }
+      }
+    ]
+  },
+  "id": 1
+}
+```
+
+#### B. Billed Tool Call: `get_market_regime` (Unpaid - HTTP 402)
+* **Method**: `POST /mcp/` (No key/signature provided)
+* **Request Payload**:
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_market_regime",
+    "arguments": {
+      "ticker": "NQ"
+    }
+  },
+  "id": 2
+}
+```
+* **Response Status**: `402 Payment Required`
+* **Response Header (`Payment-Required`)**:
+`exact chainId="eip155:84532" asset="0x036CbD53842c5426634e7929541eC2318f3dCF7e" amount="19000" payTo="0xYourWalletAddress"`
+
+#### C. Billed Tool Call: `get_market_regime` (Paid / Authorized - HTTP 200)
+When client requests include a valid prepaid key (`Authorization: Bearer tb_...`) or valid `Payment-Signature` headers.
+* **Response Header**: `x-tollbooth-credits-remaining: 9999`
+* **Admin/Raw Response Result (For Qwen bypass key)**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"schema_version\":\"1.0\",\"ticker\":\"NQ\",\"requested_as\":\"NQ\",\"timestamp\":1718210000,\"source\":\"Longfort\",\"spot\":19250.5,\"regime\":{\"gamma\":\"positive\",\"volatility\":\"stable\",\"tilt\":\"NEUTRAL\",\"consensus\":\"STABLE_PIN\",\"gamma_flip\":19180.0},\"levels\":{\"call_wall\":19400.0,\"put_wall\":18900.0,\"gamma_flip_eod\":19180.0,\"max_pain\":null}}"
+      }
+    ]
+  },
+  "id": 2
+}
+```
+* **External/Sanitized Response Result (For public paywall users)**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"schema_version\":\"1.0\",\"ticker\":\"NQ\",\"requested_as\":\"NQ\",\"timestamp\":1718210000,\"source\":\"flashalpha\",\"verdict\":\"CHOP\",\"walls_status\":\"Spot 19250.5 is between call wall (19400.0) and put wall (18900.0)\"}"
+      }
+    ]
+  },
+  "id": 2
+}
+```
+
+#### D. Prepaid Credit Purchase
+Requires x402 payment at the credit pack price (e.g. 150 USDC atomic units).
+* **Method**: `POST /credits/purchase`
+* **Response Payload (HTTP 200)**:
+```json
+{
+  "api_key": "tb_A9z2x...yourkey...",
+  "credits": 10000,
+  "net_billing": "150.0 USDC",
+  "status": "active"
+}
+```
+
+#### E. Balance Check (Free)
+* **Method**: `GET /credits/balance`
+* **Request Header**: `Authorization: Bearer tb_yourkey...`
+* **Response Payload (HTTP 200)**:
+```json
+{
+  "api_key": "tb_A9z2x...",
+  "credits": 9999,
+  "status": "active"
+}
+```
+
+---
+
+## 7. Credentials & Configuration Registry (Wallet, x402, Smithery)
+
+These credentials and network parameters are used for paywall verification, micro-payments, and platform deployment.
+
+### A. Wallet & Payment (x402 Base Mainnet)
+* **Base Wallet Address**: `0x6F275aB348EF19456C3f53bfb2A3122CaCaa1A7d`
+* **Base USDC Contract Address**: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+* **x402 Network ID**: `eip155:8453` (Base Mainnet)
+* **x402 Facilitator URL**: `https://x402.org/facilitator`
+
+### B. Tollbooth Pricing
+* **Tool Call Price**: `19000` USDC atomic units ($0.019 / call)
+* **Credit Pack Size**: `10000` calls
+* **Credit Pack Price**: `150000000` USDC atomic units ($150.00 / pack)
+
+### C. Smithery Server Listings
+* **Smithery API Key**: `d79bd21b-8261-4029-b7b5-81068b749f0a`
+* **Publish Namespace**: `longfort/`
+* **MCP Base Endpoint**: `https://api.longfortpro.com/mcp/{server_name}`
+* **Active Qualified Listings (20 servers registered total)**:
+  * `longfort/spx-regime-selector`
+  * `longfort/qqq-regime-selector`
+  * `longfort/spy-regime-selector`
+  * `longfort/nvda-regime-selector`
+  * `longfort/spacex-regime-selector` (Maps to SPCX)
+  * `longfort/spacex-options` (Maps to SPCX)
+  * `longfort/spacex-flow` (Maps to SPCX)
+  * `longfort/spacex-sentiment` (Maps to SPCX)
+  * `longfort/dax-regime-selector`
+  * `longfort/nkd-regime-selector`
+  * `longfort/gld-regime-selector`
+  * `longfort/uso-regime-selector`
+  * `longfort/iwm-regime-selector`
+  * `longfort/btc-regime-selector`
+
+

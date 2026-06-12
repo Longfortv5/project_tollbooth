@@ -399,6 +399,16 @@ async def _fetch_and_validate_regime_data(canonical_ticker: str, requested_ticke
                     "max_pain": None,
                 }
             }
+            
+            # Fetch zero_dte block from SQLite for admin calls
+            db_ticker = resolve_ticker(canonical_ticker)
+            flat_options = await fetch_sqlite_options_data(db_ticker)
+            zero_dte = None
+            if flat_options:
+                mapped_flat = map_flashalpha_to_regime(flat_options, db_ticker)
+                zero_dte = mapped_flat.get("zero_dte")
+            regime_dict["zero_dte"] = zero_dte
+            
             return regime_dict, None
         except Exception as e:
             return None, f"Failed to parse Sidebus snapshot for symbol '{symbol}': {str(e)}"
